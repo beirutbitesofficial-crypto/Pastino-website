@@ -49,13 +49,25 @@ function ensure_schema(PDO $pdo): void {
     ];
     foreach ($queries as $sql) $pdo->exec($sql);
 
+    // Portion rules mirror the Pastino POS (pasta / sauce / topping counts per menu item).
+    $columns = array_column($pdo->query('SHOW COLUMNS FROM web_menu_items')->fetchAll(), 'Field');
+    foreach (['pasta_count'=>1,'sauce_count'=>1,'topping_count'=>2] as $column => $default) {
+        if (!in_array($column, $columns, true)) $pdo->exec("ALTER TABLE web_menu_items ADD COLUMN {$column} INT NOT NULL DEFAULT {$default}");
+    }
+    if (!in_array('pasta_count', $columns, true)) {
+        $pdo->exec("UPDATE web_menu_items SET topping_count=3 WHERE id='menu-large'");
+        $pdo->exec("UPDATE web_menu_items SET sauce_count=2, topping_count=4 WHERE id='menu-signature'");
+    }
+    $settingColumns = array_column($pdo->query('SHOW COLUMNS FROM web_settings')->fetchAll(), 'Field');
+    if (!in_array('menu_synced_at', $settingColumns, true)) $pdo->exec('ALTER TABLE web_settings ADD COLUMN menu_synced_at DATETIME NULL');
+
     $count = (int)$pdo->query('SELECT COUNT(*) FROM web_menu_items')->fetchColumn();
     if ($count === 0) {
-        $stmt = $pdo->prepare('INSERT INTO web_menu_items (id,name,description,price,image,category,available,customizable,sort_order) VALUES (?,?,?,?,?,?,?,?,?)');
+        $stmt = $pdo->prepare('INSERT INTO web_menu_items (id,name,description,price,image,category,available,customizable,sort_order,pasta_count,sauce_count,topping_count) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)');
         $items = [
-            ['menu-medium','Medium','1 sauce · 2 toppings included',7,'https://images.unsplash.com/photo-1473093295043-cdd812d0e601?auto=format&fit=crop&w=1200&q=88','Pasta',1,1,10],
-            ['menu-large','Large','1 sauce · 3 toppings included',8,'https://images.unsplash.com/photo-1556761223-4c4282c73f77?auto=format&fit=crop&w=1200&q=88','Pasta',1,1,20],
-            ['menu-signature','The Signature','2 sauces · 4 toppings included',9,'https://images.unsplash.com/photo-1621996346565-e3dbc646d9a9?auto=format&fit=crop&w=1200&q=88','Pasta',1,1,30]
+            ['menu-medium','Medium','1 sauce · 2 toppings included',7,'https://images.unsplash.com/photo-1473093295043-cdd812d0e601?auto=format&fit=crop&w=1200&q=88','Pasta',1,1,10,1,1,2],
+            ['menu-large','Large','1 sauce · 3 toppings included',8,'https://images.unsplash.com/photo-1556761223-4c4282c73f77?auto=format&fit=crop&w=1200&q=88','Pasta',1,1,20,1,1,3],
+            ['menu-signature','The Signature','2 sauces · 4 toppings included',9,'https://images.unsplash.com/photo-1621996346565-e3dbc646d9a9?auto=format&fit=crop&w=1200&q=88','Pasta',1,1,30,1,2,4]
         ];
         foreach ($items as $item) $stmt->execute($item);
     }
@@ -77,10 +89,10 @@ function ensure_schema(PDO $pdo): void {
 }
 
 function storefront(PDO $pdo): array {
-    $menu = array_map(fn($r)=>['id'=>$r['id'],'name'=>$r['name'],'description'=>$r['description'],'price'=>(float)$r['price'],'image'=>$r['image'],'category'=>$r['category'],'available'=>(bool)$r['available'],'customizable'=>(bool)$r['customizable'],'sortOrder'=>(int)$r['sort_order']], $pdo->query('SELECT * FROM web_menu_items ORDER BY sort_order,id')->fetchAll());
+    $menu = array_map(fn($r)=>['id'=>$r['id'],'name'=>$r['name'],'description'=>$r['description'],'price'=>(float)$r['price'],'image'=>$r['image'],'category'=>$r['category'],'available'=>(bool)$r['available'],'customizable'=>(bool)$r['customizable'],'sortOrder'=>(int)$r['sort_order'],'portion'=>['pasta'=>(int)$r['pasta_count'],'sauce'=>(int)$r['sauce_count'],'topping'=>(int)$r['topping_count']]], $pdo->query('SELECT * FROM web_menu_items ORDER BY sort_order,id')->fetchAll());
     $options = array_map(fn($r)=>['id'=>$r['id'],'name'=>$r['name'],'price'=>(float)$r['price'],'emoji'=>$r['emoji'],'kind'=>$r['kind'],'available'=>(bool)$r['available'],'sortOrder'=>(int)$r['sort_order']], $pdo->query('SELECT * FROM web_options ORDER BY sort_order,id')->fetchAll());
     $r = $pdo->query("SELECT * FROM web_settings WHERE id='default' LIMIT 1")->fetch();
-    $settings = ['id'=>$r['id'],'brandName'=>$r['brand_name'],'heroTitle'=>$r['hero_title'],'heroSubtitle'=>$r['hero_subtitle'],'whatsappNumber'=>$r['whatsapp_number'],'currency'=>$r['currency'],'deliveryFee'=>(float)$r['delivery_fee']];
+    $settings = ['id'=>$r['id'],'brandName'=>$r['brand_name'],'heroTitle'=>$r['hero_title'],'heroSubtitle'=>$r['hero_subtitle'],'whatsappNumber'=>$r['whatsapp_number'],'currency'=>$r['currency'],'deliveryFee'=>(float)$r['delivery_fee'],'menuSyncedAt'=>$r['menu_synced_at']];
     return ['menu'=>$menu,'toppings'=>$options,'settings'=>$settings];
 }
 
@@ -122,4 +134,14 @@ function orders_payload(PDO $pdo, int $limit = 150): array {
         $orderItems = array_values(array_filter($items,fn($i)=>(string)$i['order_id']===(string)$o['id']));
         return ['id'=>(int)$o['id'],'orderNumber'=>$o['order_number'],'status'=>$o['status'],'orderType'=>$o['order_type'],'customerName'=>$o['customer_name'],'phone'=>$o['phone'],'address'=>$o['address'],'notes'=>$o['notes'],'subtotal'=>(float)$o['subtotal'],'deliveryFee'=>(float)$o['delivery_fee'],'total'=>(float)$o['total'],'createdAt'=>$o['created_at'],'updatedAt'=>$o['updated_at'],'items'=>array_map(fn($i)=>['id'=>(int)$i['id'],'name'=>$i['name'],'quantity'=>(int)$i['quantity'],'unitPrice'=>(float)$i['unit_price'],'lineTotal'=>(float)$i['line_total'],'toppings'=>json_decode($i['options_json'],true) ?: []],$orderItems)];
     },$orders);
+}
+
+// Same rules as the Pastino POS: at least one pasta and one sauce up to the portion
+// limit (any sauce can be skipped), toppings up to the limit, cheese unlimited.
+function selection_is_valid(array $portion, int $pasta, int $sauces, int $toppings): bool {
+    if ($portion['pasta'] > 0 && ($pasta < 1 || $pasta > $portion['pasta'])) return false;
+    if ($portion['sauce'] > 0 && ($sauces < 1 || $sauces > $portion['sauce'])) return false;
+    if ($portion['pasta'] === 0 && $pasta > 0) return false;
+    if ($portion['sauce'] === 0 && $sauces > 0) return false;
+    return $toppings <= $portion['topping'];
 }

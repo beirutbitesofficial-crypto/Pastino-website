@@ -18,11 +18,10 @@ try {
     foreach($selections as $selection){
         $itemId=clean_text($selection['menuItemId'] ?? '',100); if(!isset($menuById[$itemId])) json_response(['error'=>'A menu item is unavailable.'],400); $item=$menuById[$itemId];
         $qty=max(1,min(20,(int)($selection['quantity'] ?? 1)));
-        $ids=[]; if(!empty($selection['pastaId']))$ids[]=$selection['pastaId']; foreach(['sauceIds','toppingIds','cheeseIds'] as $field) foreach((array)($selection[$field] ?? []) as $id)$ids[]=$id;
-        $chosen=[]; foreach($ids as $id) if(isset($optById[$id]))$chosen[]=$optById[$id];
-        $pasta=array_values(array_filter($chosen,fn($o)=>$o['kind']==='pasta')); $sauces=array_values(array_filter($chosen,fn($o)=>$o['kind']==='sauce')); $tops=array_values(array_filter($chosen,fn($o)=>$o['kind']==='topping'));
-        $lower=strtolower($item['name']); $requiredSauces=str_contains($lower,'signature')?2:1; $maxTops=str_contains($lower,'signature')?4:(str_contains($lower,'large')?3:2);
-        if($item['customizable'] && (count($pasta)!==1 || count($sauces)!==$requiredSauces || count($tops)>$maxTops)) json_response(['error'=>'Please complete '.$item['name'].' selections correctly.'],400);
+        $ids=[]; if(!empty($selection['pastaId']))$ids[]=$selection['pastaId']; foreach(['pastaIds','sauceIds','toppingIds','cheeseIds'] as $field) foreach((array)($selection[$field] ?? []) as $id)$ids[]=$id;
+        $chosen=[]; if($item['customizable']) foreach(array_unique(array_map('strval',$ids)) as $id) if(isset($optById[$id]))$chosen[]=$optById[$id];
+        $count=fn($kind)=>count(array_filter($chosen,fn($o)=>$o['kind']===$kind));
+        if($item['customizable'] && !selection_is_valid($item['portion'],$count('pasta'),$count('sauce'),$count('topping'))) json_response(['error'=>'Please complete '.$item['name'].' selections correctly.'],400);
         $unit=(float)$item['price']; foreach($chosen as $o)$unit+=(float)$o['price']; $labels=array_map(fn($o)=>trim($o['emoji'].' '.$o['name']),$chosen);
         $lines[]=['menuItemId'=>$item['id'],'name'=>$item['name'],'quantity'=>$qty,'unitPrice'=>$unit,'lineTotal'=>$unit*$qty,'labels'=>$labels];
     }

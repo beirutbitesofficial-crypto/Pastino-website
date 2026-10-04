@@ -26,6 +26,27 @@ Admin image uploads are stored in `/uploads`. The folder must be writable by PHP
 
 Every checkout is validated and recalculated on the server, then saved to MySQL before WhatsApp opens. The customer is redirected to a pre-filled WhatsApp message after the order is stored.
 
+## Menu sync with the Pastino POS
+
+The POS is the source of truth for the menu. When a manager edits the menu in the POS, it pushes the whole menu to:
+
+- `POST /api/system-menu.php` with header `X-Pastino-Key: <system_api_key>` and body `{ "menu": [...], "toppings": [...] }` (the POS's own `pastino-menu-v2` / `pastino-toppings-v2` data)
+
+The website then matches the POS exactly: same item ids, names, prices, images, categories, availability, portion rules (how many pastas / sauces / toppings each size includes) and options. Items removed in the POS are removed here. `GET` on the same URL returns the current website menu for checking.
+
+To turn it on, set `PASTINO_WEBSITE_URL` and `PASTINO_WEBSITE_KEY` (= `system_api_key` above) on the POS server — see the POS README. Once synced, `/admin/` shows the last sync time; edit the menu in the POS, since admin edits are replaced on the next sync.
+
+## Design and motion
+
+The homepage uses GSAP + ScrollTrigger (vendored in `assets/vendor/gsap`, no build step):
+
+- `assets/site.css` — customer website styles (`assets/style.css` stays for `/admin/` and `/orders/`)
+- `assets/motion/pasta-rain.js` — falling-pasta canvas engine (ambient page rain + the pour into the hero bowl)
+- `assets/motion/home.js` — intro curtain, hero pour and pile-up, pinned scroll scenes, marquee, menu card reveals, fly-to-cart and the sauce-filled footer
+- `assets/app.js` — menu, builder, cart and checkout logic
+
+Visitors with "reduce motion" turned on get the full, static page.
+
 ## POS integration endpoint
 
 The website exposes:
